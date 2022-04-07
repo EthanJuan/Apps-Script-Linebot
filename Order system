@@ -1,0 +1,1896 @@
+var CHANNEL_ACCESS_TOKEN = 'VkAjB9IJE3PRIqOA85F/6DBiSKePqOi2v7VP+AGLH93UlZmvwXVeAcANL/yXHe4PckDdaSAcFeoKH3WVZgcjPn4ZNX0MAXkvhlFCdCzxcS9I5gH0eZ9aIo6Pam3lAPOz9GxMWHx3kWX/jTkRBmpt8gdB04t89/1O/w1cDnyilFU=';
+
+var processStatus=0;
+var targetSheet;
+var targetRow;
+var occupied;
+
+
+function startTimeTrigger() {
+  // Trigger every 6 hours.
+  ScriptApp.newTrigger('reset_Process')
+      .timeBased()
+      .after(1000*60*5)
+      .create();
+  console.log("newTrigger");
+
+}
+
+function cancelTimeTrigger(){
+  
+  var triggers = ScriptApp.getProjectTriggers();
+  
+  for(var i = 0; i < triggers.length; i++){
+    if(triggers[i].getTriggerSource() == ScriptApp.TriggerSource.CLOCK){
+      ScriptApp.deleteTrigger(triggers[i]);
+      console.log("cancelTrigger");
+    };
+  };
+};
+
+function reset_Process()
+{
+    var sheet_id = '1mtFdnG7fW5aZatIcMi6aoQq0X62n3iV5FNMpZU4H2no'
+    var SpreadSheet = SpreadsheetApp.openById(sheet_id);
+    var Sheet = SpreadSheet.getSheetByName("variable");
+
+    console.log("reset_Process");
+    Sheet.getRange("B1").setValue(0);
+    var userid=Sheet.getRange("B4").getValue();
+    console.log("userid="+userid);
+    Sheet.getRange("B4").setValue(0);
+
+    send_push_msg(CHANNEL_ACCESS_TOKEN, userid, '未反應時間超過10分鐘，已重設使用狀態。若要再用先前指令，需重新開始');
+}
+
+function doGet(e) {
+  var gmsg=JSON.parse(e.getData.contents);
+  console.log(ContentService.createTextOutput(UrlFetchApp.fetch("http://ip-api.com/json")));
+  return ContentService.createTextOutput(UrlFetchApp.fetch("http://ip-api.com/json"));
+}
+
+function getUsername(userId) {
+  var url = 'https://api.line.me/v2/bot/profile/' + userId;
+  var response = UrlFetchApp.fetch(url, {
+    'headers': {
+      'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
+    }
+  });
+  return JSON.parse(response.getContentText()).displayName;
+}
+
+//function getImageId(messageID,sheet) {
+function getImageId(messageID) {
+  var url = 'https://api-data.line.me/v2/bot/message/' + messageID + '/content';
+//  console.log(url);
+  var response = UrlFetchApp.fetch(url, {
+    'headers': {
+      'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
+    }
+  });
+  var rc=response.getResponseCode();
+//  let cdnUrl = response.getAllHeaders()["Location"] 
+//  console.info("CDN URL %s", cdnUrl);
+
+  console.log(rc);
+  if(rc==200){
+    var fileBlob = response.getBlob();
+//    console.log(fileBlob.getName());
+    var folderId = "1-5Lo-WG9IZj0I2Tbe3OKxtfq0q1cWkFR";
+    var folder= DriveApp.getFolderById(folderId);
+//    console.log(folder.getName());
+    if (folder != null){
+      var file= folder.createFile(fileBlob);
+      fileName=file.getName();
+      fileSize=file.getSize();
+//      console.log(file.getUrl());
+//      console.log(file.getId());
+      
+//sheet.insertImage(file.getThumbnail(), 8, 1);  // Insert Image
+    }
+  }
+
+  var fileInfo = { 'rc':rc, 'filename': fileName, 'filesize':fileSize};
+
+//  Logger.log(fileInfo);
+//  console.log(fileInfo);
+//  return url+".jpg";  
+
+
+  return file.getId();
+}
+
+
+function doPost(e) {
+ 
+    var msg = JSON.parse(e.postData.contents);
+
+//   cancelTimeTrigger(); 
+//            console.log("canceltrigger");
+  try {
+      
+    // 取出 replayToken 和 發送的訊息文字
+    var replyToken = msg.events[0].replyToken;
+    var msgType = msg.events[0].message.type;
+  
+    console.log('msgType='+msgType);
+    
+    if (typeof replyToken === 'undefined') {
+      return;
+    }
+    
+    // 和Google試算表連動
+    var sheet_id = '1mtFdnG7fW5aZatIcMi6aoQq0X62n3iV5FNMpZU4H2no'
+    var SpreadSheet = SpreadsheetApp.openById(sheet_id);
+    var Sheet = SpreadSheet.getSheetByName("店家");
+    var sheet_Variable = SpreadSheet.getSheetByName("variable");
+    var sheet_Order=SpreadSheet.getSheetByName('order');
+    var sheet_Mealorder=SpreadSheet.getSheetByName('Mealorder');
+    var sheet_Memberorder=SpreadSheet.getSheetByName('Memberorder');
+ //    var sheet_Name;
+//    var userId = JSON.parse(e.postData.contents).events[0].source.userId;
+    var userId = msg.events[0].source.userId;
+    var groupId = msg.events[0].source.groupId;
+    console.log("userId="+userId);
+    console.log("groupId="+groupId);
+    var username = getUsername(userId);
+    var messageID = msg.events[0].message.id;
+    var today= new Date();
+    today.setTime(today.getTime()+1000*60*60*12);
+    var help=0;
+    
+//initialize global variable
+    if(sheet_Variable==null)
+    {
+      sheet_Variable=SpreadSheet.insertSheet("variable");
+      sheet_Variable.getRange("A1").setValue("processStatus")
+      sheet_Variable.getRange("B1").setValue(0);
+      processStatus=0;
+      sheet_Variable.getRange("A2").setValue("targetSheet")
+      sheet_Variable.getRange("B2").setValue(null);
+      targetSheet=null;
+      sheet_Variable.getRange("A3").setValue("targetRow")
+      sheet_Variable.getRange("B3").setValue(0);
+      targetRow=0;
+      sheet_Variable.getRange("A4").setValue("occupied")
+      sheet_Variable.getRange("B4").setValue(0);
+      occupied=0;
+      sheet_Variable.getRange("A5").setValue("groupId")
+//      sheet_Variable.getRange("B5").setValue(groupId);
+      
+    }
+    else
+    {
+      processStatus=sheet_Variable.getRange("B1").getValue();
+      targetSheet=sheet_Variable.getRange("B2").getValue();
+      targetRow=sheet_Variable.getRange("B3").getValue();
+      occupied=sheet_Variable.getRange("B4").getValue();
+      if(groupId!=undefined)
+      {
+        help=1;
+        sheet_Variable.getRange("B5").setValue(groupId);
+      }
+    }
+  
+    console.log('processStatus='+processStatus);
+    console.log('targetSheet='+targetSheet);
+    console.log('targetRow='+targetRow);
+    console.log('occupied='+occupied);
+    
+    if(sheet_Order==null)
+    {
+      sheet_Order=SpreadSheet.insertSheet('order');
+      sheet_Order.getRange("A1").setValue(0);
+      sheet_Order.getRange("B1").setValue("日期");
+      sheet_Order.getRange("C1").setValue("時間");
+      sheet_Order.getRange("D1").setValue("名字");
+      sheet_Order.getRange("E1").setValue("店家");
+      sheet_Order.getRange("F1").setValue("餐點");
+      sheet_Order.getRange("G1").setValue("單價");
+      sheet_Order.getRange("H1").setValue("數量");
+      sheet_Order.getRange("I1").setValue("總價");
+      sheet_Order.getRange("J1").setValue("動作");
+      
+    }
+    
+    if(sheet_Mealorder==null)
+    {
+      sheet_Mealorder=SpreadSheet.insertSheet('Mealorder');
+      sheet_Mealorder.getRange("A1").setValue(0);
+      sheet_Mealorder.getRange("B1").setValue("日時");
+      sheet_Mealorder.getRange("C1").setValue("餐點");
+      sheet_Mealorder.getRange("D1").setValue("餐點數量");
+    }
+
+    if(sheet_Memberorder==null)
+    {
+      sheet_Memberorder=SpreadSheet.insertSheet('Memberorder');
+      sheet_Memberorder.getRange("A1").setValue(0);
+      sheet_Memberorder.getRange("B1").setValue("日時");
+      sheet_Memberorder.getRange("C1").setValue("名字");
+      sheet_Memberorder.getRange("D1").setValue("加點");
+      sheet_Memberorder.getRange("E1").setValue("取消");
+      sheet_Memberorder.getRange("F1").setValue("餐點數量");
+    }
+
+
+    if(occupied==userId)
+    {
+      cancelTimeTrigger(); 
+      console.log("canceltrigger");
+    }
+
+
+
+    switch(msgType)
+    { 
+      case 'text':
+        var userMessage = msg.events[0].message.text;
+
+
+        // 特殊指令的處理
+        switch(userMessage) {
+          //幫助
+          case 'help':
+          case '幫助':
+          case '幫忙':
+            var h0='\
+help/幫助/幫忙: 列出輸入關鍵詞\n\n\
+點餐使用輸入規則如下:\n\
+1.今日店家: 會列出今日的主要店家\n\
+2.點餐: 會列出今日店家的餐點內容\n\
+3.加點餐點名稱: 即可點餐 如:加點排骨飯\n\
+4.取消餐點名稱: 即可取消餐點 如:取消排骨飯\n\
+5.我的訂單/我的帳單: 列出所訂餐點與金額\n\
+            \n';
+            var h1='\
+管理者使用說明:\n\
+1.新增店家: 進入新增店家程序->輸入店家名稱->輸入餐點名稱->輸入價錢\n\
+2.新增餐點: 進入新增餐點程序->輸入店家名稱->輸入餐點名稱->輸入價格\n\
+3.店家/有哪些店家: 列出店家名單\n\
+4.刪除店家: 輸入店家名稱刪除\n\
+5.刪除餐點: 進入刪除餐點程序->輸入店家名稱->輸入餐點名稱\n\
+6.餐點/有哪些餐點: 列出所輸入店家的餐點\n\
+7.設定今日店家: 指定要團購的店家\n\
+8.開店/開始訂餐: 開啟系統接受訂單\n\
+9.關店/關閉訂餐: 關閉系統並傳送餐點統計與所訂餐人員的個別統計\n\
+            ';
+            if(!help)
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, h0+h1);
+            else
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, h0);
+          return;
+        
+          // 清空
+          case ':clear':
+          case '/clear':
+          case '清空':
+          case 'reset':
+          case '重設':
+//            clear_all_report(Sheet);
+            sheet_Variable.getRange("A1").setValue("processStatus")
+            sheet_Variable.getRange("B1").setValue(0);
+            processStatus=0;
+            sheet_Variable.getRange("A2").setValue("targetSheet")
+            sheet_Variable.getRange("B2").setValue(null);
+            targetSheet=null;
+            sheet_Variable.getRange("A3").setValue("targetRow")
+            sheet_Variable.getRange("B3").setValue(0);
+            targetRow=0;
+            sheet_Variable.getRange("A4").setValue("occupied")
+            sheet_Variable.getRange("B4").setValue(0);
+            occupied=0;
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, '已恢復初始設定');
+            return;
+
+          // 列出當前回報情況
+          case '/list':
+          case ':list':
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, print_report_list(Sheet));
+            return;
+          case '/insert':
+          case ':insert':
+          case '新增表單':
+            SpreadSheet.insertSheet();
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, '新增表單完成');
+            return;
+
+          case 'bc':
+            console.log('Broadcast');
+            send_broadcast_msg(CHANNEL_ACCESS_TOKEN,"Sam 已改版\"店家\"的使用方式，您可以試用看看");
+          return;
+
+          case 'get':
+          case 'Get':
+    //var v=Sheet.getRange(2, 1).getFormula().split('\"')[1];
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage);
+    //        send_msg(CHANNEL_ACCESS_TOKEN, replyToken, v);
+    //        send_image_msg(CHANNEL_ACCESS_TOKEN, replyToken, v);
+    //        send_text_image_msg(CHANNEL_ACCESS_TOKEN, replyToken, v,"https://theceosleepoutza.co.za/blog/wp-content/uploads/2017/06/get-it-300x200.jpg");
+    Logger.log(v);
+    console.log(v);
+    MailApp.sendEmail('kkjuan@gmail.com',log,v);
+            return;
+
+          case '/delete':
+          case ':delete':
+          case '刪除店家':
+            if(occupied==0)
+            {
+              sheet_Variable.getRange("B4").setValue(userId);
+              processStatus=2;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+
+              //SpreadSheet.getSheetName()
+              //SpreadSheet.deleteSheet(SpreadSheet.getSheetByName('工作表2'));
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, '請問要刪除什麼店家名稱？');
+              startTimeTrigger();
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在編輯，請稍後在試!");
+            }
+            return;
+    
+          case '刪除餐點':
+            if(occupied==0)
+            {
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if (Sheet==null)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+              }
+              else
+              {
+                var list ='請選擇店家如下:';
+                var lastRow=Sheet.getLastRow();
+                if(lastRow<4)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+                }
+                else
+                {
+                  for(i=4;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+Sheet.getRange(i,2).getValue();
+                  }
+                  //go into list meals of restaurant
+                  processStatus=6;
+                  sheet_Variable.getRange("B1").setValue(processStatus);
+                  sheet_Variable.getRange("B4").setValue(userId);
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+                  startTimeTrigger();
+                }
+              }
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在編輯，請稍後在試!");
+            }
+            return;
+
+
+          case '有哪些店家':
+          case '有那些店家':
+          case '店家':
+            if(occupied==0)
+            {
+
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if (Sheet==null)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家，請新增店家...");
+              }
+              else
+              {
+                var list ='店家如下:';
+                var lastRow=Sheet.getLastRow();
+                if(lastRow<4)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家，請新增店家...");
+                }
+                else
+                {
+                  for(i=4;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+Sheet.getRange(i,2).getValue();
+                  }
+                  processStatus=3;
+                  sheet_Variable.getRange("B1").setValue(processStatus);
+                  sheet_Variable.getRange("B4").setValue(userId);
+//                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list+"\n\n若要列出餐點，請輸入店家名稱?(若不列出輸入 否 )");
+                  startTimeTrigger();
+                }
+              }
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在編輯，請稍後在試!");
+            }
+            return;
+
+          case '新增餐點':
+            if(occupied==0)
+            {
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if (Sheet==null)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+              }
+              else
+              {
+                var list ='請選擇店家如下:';
+                var lastRow=Sheet.getLastRow();
+                if(lastRow<4)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+                }
+                else
+                {
+                  for(i=4;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+Sheet.getRange(i,2).getValue();
+                  }
+                  //go into list meals of restaurant
+                  processStatus=5;
+                  sheet_Variable.getRange("B1").setValue(processStatus);
+                  sheet_Variable.getRange("B4").setValue(userId);
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+                  startTimeTrigger();
+                }
+              }
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在查詢，請稍後在試!");
+            }
+
+          return;
+
+          case '有哪些餐點':
+          case '有那些餐點':
+          case '餐點':
+            if(occupied==0)
+            {
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if (Sheet==null)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+              }
+              else
+              {
+                var list ='請選擇店家如下:';
+                var lastRow=Sheet.getLastRow();
+                if(lastRow<4)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+                }
+                else
+                {
+                  for(i=4;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+Sheet.getRange(i,2).getValue();
+                  }
+                  //go into list meals of restaurant
+                  processStatus=3;
+                  sheet_Variable.getRange("B1").setValue(processStatus);
+                  sheet_Variable.getRange("B4").setValue(userId);
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+                  startTimeTrigger();
+                }
+              }
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在查詢，請稍後在試!");
+            }
+            return;
+
+          case '新增店家':
+            if(occupied==0)
+            {
+              sheet_Variable.getRange("B4").setValue(userId);
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if(Sheet==null)
+              {
+                Sheet=SpreadSheet.insertSheet("店家");
+                Sheet.getRange("A1").setValue("訂餐系統開關");
+                Sheet.getRange("B1").setValue(0);
+                Sheet.getRange("A2").setValue("今日店家");
+                Sheet.getRange("B2").setValue(0);
+                Sheet.getRange("A3").setValue(0);//編號
+                Sheet.getRange("B3").setValue("店家名稱");
+              }
+              processStatus=1;            
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              console.log('processStatus'+processStatus);
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問店家名稱?");
+              startTimeTrigger();
+            }
+            else
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在編輯，請稍後在試!");
+            }
+            return;
+
+//          case'結束新增餐點':
+//            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"要加入餐點圖片?(是/否)");
+//            startTimeTrigger();
+//            return;
+
+          case'是':
+          case'對':
+          case'好':
+            if(processStatus==1 && occupied==userId)
+            {
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if(Sheet==null)
+              {
+                Sheet=SpreadSheet.insertSheet("店家");
+                Sheet.getRange("A1").setValue("訂餐系統開關");
+                Sheet.getRange("B1").setValue(0);
+                Sheet.getRange("A2").setValue("今日店家");
+                Sheet.getRange("B2").setValue(0);
+                Sheet.getRange("A3").setValue(0);//編號
+                Sheet.getRange("B3").setValue("店家名稱");
+                }            
+              processStatus=1;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問店家名稱?");
+
+            } 
+            else if((processStatus==11 && occupied==userId) || (processStatus==51 && occupied==userId) || (processStatus==61 && occupied==userId))
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問餐點名稱?");
+
+            //  processStatus=12;
+            //  sheet_Variable.getRange("B1").setValue(processStatus);
+
+            }
+            else if (processStatus==12 && occupied==userId)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請上傳圖片");
+            }
+            else if (processStatus==3 && occupied==userId)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問店家名稱?");
+            }
+            else if (processStatus==4 && occupied==userId)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問店家名稱?");
+            }
+            else if (processStatus==5 && occupied==userId)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請問店家名稱?");
+            }
+            startTimeTrigger();
+          
+          return;
+
+          case'否':
+          case'不要':
+            if(processStatus==12 && occupied==userId)
+            {
+              processStatus=1;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"繼續新增店家嗎?(是/否)");
+              startTimeTrigger();
+            }
+            else if(processStatus==11 && occupied==userId)
+            {
+              processStatus=12;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"要加入店家圖片嗎?(是/否)\n(只能一張圖)");
+              startTimeTrigger();
+
+            }
+            else 
+            {
+              if (processStatus==1 && occupied==userId)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"完成新增店家");
+              } 
+              else if (processStatus==3 && occupied==userId)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"結束列出店家餐點，謝謝!");
+              }
+              else if (processStatus==4 && occupied==userId)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"結束設定今日店家，謝謝!");
+
+              }
+              else if ((processStatus==5 && occupied==userId) || (processStatus==51 && occupied==userId))
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"結束新增餐點，謝謝!");
+              }
+              else if (processStatus==61 && occupied==userId)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"結束刪除餐點，謝謝!");
+              }
+              
+              processStatus=0;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              occupied=0;
+              sheet_Variable.getRange("B4").setValue(occupied);
+            }
+
+            return;
+
+          case '設定今日店家':
+            if(occupied==0)
+            {
+              Sheet=SpreadSheet.getSheetByName("店家");
+              if (Sheet==null)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+              }
+              else
+              {
+                var list ='請選擇店家如下:';
+                var lastRow=Sheet.getLastRow();
+                if(lastRow<4)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+                }
+                else
+                {
+                  for(i=4;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+Sheet.getRange(i,2).getValue();
+                  }
+                  //go into list meals of restaurant
+                  processStatus=4;
+                  sheet_Variable.getRange("B1").setValue(processStatus);
+                  sheet_Variable.getRange("B4").setValue(userId);
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+                  startTimeTrigger();
+                }
+              }
+
+            }
+            else
+            {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前有人在設定，請稍後再試一次");
+            }
+
+          return;
+
+          case '今日店家':
+            Sheet=SpreadSheet.getSheetByName("店家");
+            if(Sheet==null)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有店家請新增店家....");
+            }
+            else
+            {
+              if(Sheet.getRange("B2").getValue()=='')
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有設定今日店家，請設定後再查詢....");
+              }
+              else
+              {
+                var sh=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());
+                if(sh.getRange("B1").getValue()=='')
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,Sheet.getRange("B2").getValue());
+                }
+                else
+                {
+                  send_text_image_msg(CHANNEL_ACCESS_TOKEN, replyToken,Sheet.getRange("B2").getValue(),sh.getRange("B1").getValue());
+                }
+              }
+            }
+          return;
+
+          case '開始訂餐':
+          case '打開訂餐':
+          case '開店':
+            Sheet=SpreadSheet.getSheetByName("店家");
+            if(Sheet==null)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"系統無店家表單....");
+            }
+            else
+            {
+              if(Sheet.getRange("B1").getValue()==1)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"訂餐系統已開啟....");
+              }
+              else
+              {
+                if(Sheet.getRange("B2").getValue()=='')
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有設定今日店家，請設定今日店家....");
+                }
+                else
+                {
+                  Sheet.getRange("B1").setValue(1);
+                  Sheet.getRange("C1").setValue(today.toString());
+                  SpreadSheet.deleteSheet(SpreadSheet.getSheetByName("Mealorder"));
+                  SpreadSheet.deleteSheet(SpreadSheet.getSheetByName("Memberorder"));
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"訂餐系統開啟了...");
+                  var sh=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());
+//                  console.log(Sheet.getRange("B2").getValue());
+//                  console.log(sh.getRange("B1").getValue());
+                  if(sh.getRange("B1").getValue()=='')
+                  {
+                    console.log("no image")
+                    if(groupId==undefined||groupId=="")
+                    {
+//                      send_broadcast_msg(CHANNEL_ACCESS_TOKEN, "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+                      send_push_msg(CHANNEL_ACCESS_TOKEN,sheet_Variable.getRange("B5").getValue(), "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+                    }
+                    else
+                    {
+//                      send_msg(CHANNEL_ACCESS_TOKEN,replyToken, "訂餐系統開啟了...\n點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());                  
+                      send_push_msg(CHANNEL_ACCESS_TOKEN,groupId, "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+                    }
+                  }
+                  else
+                  {
+//                    console.log("have image")
+//                    console.log("groupId="+groupId);
+                    if(groupId==undefined||groupId=="")
+                    {
+//                    console.log("groupId undefined");
+
+//                      send_broadcast_msg(CHANNEL_ACCESS_TOKEN, "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+//                      send_broadcast_image_msg(CHANNEL_ACCESS_TOKEN, sh.getRange("B1").getValue());
+                      send_push_msg(CHANNEL_ACCESS_TOKEN,sheet_Variable.getRange("B5").getValue(), "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+                      send_push_image_msg(CHANNEL_ACCESS_TOKEN,sheet_Variable.getRange("B5").getValue(), sh.getRange("B1").getValue());
+                    }
+                    else
+                    {
+//                   console.log("groupId have");
+//                    send_text_image_msg(CHANNEL_ACCESS_TOKEN,replyToken,"訂餐系統開啟了...\n點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue(), sh.getRange("B1").getValue());
+
+                      send_push_msg(CHANNEL_ACCESS_TOKEN,groupId, "點餐嘍!\n今日店家: "+Sheet.getRange("B2").getValue());
+                      send_push_image_msg(CHANNEL_ACCESS_TOKEN,groupId, sh.getRange("B1").getValue());
+
+                    }
+                  }
+                }
+
+              }
+            }
+          return;
+
+          case '關閉訂餐':
+          case '關閉系統':
+          case '關店':
+            Sheet=SpreadSheet.getSheetByName("店家");
+            if(Sheet==null)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"系統無法關閉....");
+            }
+            else
+            {
+              if(Sheet.getRange("B1").getValue()==0)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"訂餐系統已關閉....");
+              }
+              else
+              {
+                Sheet.getRange("B1").setValue(0);
+                Sheet.getRange("D1").setValue(today.toString());
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"訂餐系統關閉了...");
+                var sheet_restaurant=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());          
+                if(groupId==undefined||groupId=="")
+                {
+//                  console.log("gid="+groupId);
+                  send_broadcast_msg(CHANNEL_ACCESS_TOKEN, "點餐時間結束嘍!謝謝您...");
+                }
+                else
+                {
+//                  console.log("gid="+groupId);
+                  send_push_msg(CHANNEL_ACCESS_TOKEN,groupId, "點餐時間結束嘍!謝謝您...");
+                }
+
+                var d=new Date();
+                var open=new Date();
+                var close=new Date();
+                open.setTime(Date.parse(Sheet.getRange("C1").getValue()));
+                close.setTime(Date.parse(Sheet.getRange("D1").getValue()));
+                var list=Sheet.getRange("B2").getValue()+"餐點統計...";
+                var lastRow= sheet_Mealorder.getLastRow();
+                var price=0;
+                var sum=0;
+                for(i=2;i<=lastRow;i++)
+                {
+                  var lrow=sheet_restaurant.getLastRow();
+                  for(j=3;j<=lrow;j++)
+                  {
+                    if (sheet_restaurant.getRange(j,2).getValue()==sheet_Mealorder.getRange(i,3).getValue())
+                    {
+                      price=sheet_Mealorder.getRange(i,4).getValue()*sheet_restaurant.getRange(j,3).getValue();
+                      sum=sum+price;
+                      list=list+'\n'+sheet_Mealorder.getRange(i,3).getValue()+'NT$'+sheet_restaurant.getRange(j,3).getValue()+'x'+sheet_Mealorder.getRange(i,4).getValue()+' NT$'+price;
+                      break;
+                    }
+                  }
+                }
+
+                list=list+'\n 總金額是NT$'+sum;
+
+                if(groupId==undefined||groupId=="")
+                {
+                  console.log("broadcast")
+                  send_broadcast_msg(CHANNEL_ACCESS_TOKEN, list);
+                }
+                else
+                {
+                  console.log("Push")
+                  send_push_msg(CHANNEL_ACCESS_TOKEN,userId, list);
+                }
+                
+                list="訂餐人員與金額如下:";
+                price=0;
+                sum=0;
+                lastRow=sheet_Memberorder.getLastRow();
+                for(i=2;i<=lastRow;i++)
+                {
+                  if(sheet_Memberorder.getRange(i,6).getValue()>0)
+                  {
+                    list=list+'\n'+sheet_Memberorder.getRange(i,3).getValue()+'的帳單';
+                    price=0;
+                    var lrow=sheet_Order.getLastRow();
+                    var found=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      d.setTime(Date.parse(sheet_Order.getRange(j,2).getValue()));
+                      if(open<d && d<close)
+                      {
+                      // console.log('opent='+open.toString());
+                      // console.log('dt='+d.toString());
+                      // console.log('closet='+close.toString());
+//                        console.log("open<d<close"+sheet_Memberorder.getRange(i,3).getValue());
+                        if(sheet_Order.getRange(j,4).getValue()==sheet_Memberorder.getRange(i,3).getValue()&& sheet_Order.getRange(j,10).getValue()== '加點' && sheet_Order.getRange(j,11).getValue()=="")
+                        {
+                        console.log(sheet_Memberorder.getRange(i,3).getValue()+price);
+
+                          found=1;
+                          list=list+'\n'+sheet_Order.getRange(j,6).getValue()+' NT$'+sheet_Order.getRange(j,7).getValue();
+                          console.log('sheet_Order.getRange(j,7).getValue()='+sheet_Order.getRange(j,7).getValue());
+                          price=price+sheet_Order.getRange(j,7).getValue();
+                          console.log('price='+price);
+                        }
+
+                      }
+                    }
+                    if(found)
+                    {
+                      list=list+'\n總價：NT$'+price;
+                      sum=sum+price;
+                    }
+                    else
+                    {
+                      console.log("unfound");
+                    }
+                  }
+                }
+
+                list=list+'\n總金額：NT$'+sum;
+
+                if(groupId==undefined||groupId=="")
+                {
+                  send_broadcast_msg(CHANNEL_ACCESS_TOKEN, list);
+                }
+                else
+                {
+                  send_push_msg(CHANNEL_ACCESS_TOKEN,userId, list);
+                }
+
+              }
+            }
+          return;
+
+          case '點餐':
+          case '今日午餐':
+          case '今日餐點':
+            Sheet=SpreadSheet.getSheetByName("店家");
+            if(Sheet.getRange("B1").getValue()==0)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前訂餐時間已結束...下次請早謝謝...");
+            }
+            else
+            {
+              if(Sheet.getRange("B2").getValue()=='')
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有設定今日店家，請管理員設定今日店家後再點餐....");
+              }
+              else
+              {
+                var sh=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());
+//                  console.log(Sheet.getRange("B2").getValue());
+//                  console.log(sh.getRange("B1").getValue());
+                var list ='今日店家是'+Sheet.getRange("B2").getValue()+'\n餐點如下:';
+                var lastRow=sh.getLastRow();
+                if(lastRow<3)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"這間店家沒有餐點，請通知管理者加入餐點...");
+                }
+                else
+                {
+                  for(i=3;i<=lastRow;i++)
+                  {
+                    list=list+'\n'+sh.getRange(i,2).getValue()+" NT$"+sh.getRange(i,3).getValue()+' '+sh.getRange(i,4).getValue();
+                  }
+                  list=list+'\n請問要點甚麼餐呢?'
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+//                  processStatus=0;
+//                  sheet_Variable.getRange("B1").setValue(processStatus);
+//                  occupied=0;
+//                  sheet_Variable.getRange("B4").setValue(occupied);
+                }
+              }
+            }
+          
+          return;
+
+          case '我的訂單':
+          case '我的帳單':
+            Sheet=SpreadSheet.getSheetByName("店家");
+            var d=new Date();
+//            var today=new Date();
+            var open=new Date();
+            var close=new Date();
+            open.setTime(Date.parse(Sheet.getRange("C1").getValue()));
+            close.setTime(Date.parse(Sheet.getRange("D1").getValue()));
+            var lastRow=sheet_Order.getLastRow();
+            var price=0;
+            var list=username+'您的訂單如下';
+            var found=0;
+
+            console.log("lastrow="+lastRow);
+            for(i=2;i<=lastRow;i++)
+            {
+//            console.log("i="+i);
+              d.setTime(Date.parse(sheet_Order.getRange(i,2).getValue()));
+              if(open>close)
+              {
+                if(open<d && sheet_Order.getRange(i,4).getValue()==username && sheet_Order.getRange(i,10).getValue()== '加點' && sheet_Order.getRange(i,11).getValue()=="")
+                {
+              console.log("found");
+                        // console.log('opent='+open.toString());
+                        // console.log('dt='+d.toString());
+                        // console.log('closet='+close.toString());
+                  found=1;
+                  list=list+'\n'+sheet_Order.getRange(i,6).getValue()+' NT$'+sheet_Order.getRange(i,7).getValue();
+                  price=price+sheet_Order.getRange(i,7).getValue();
+                }
+
+              }
+              else
+              {
+                if(open<d && d<close && sheet_Order.getRange(i,4).getValue()==username && sheet_Order.getRange(i,10).getValue()== '加點' && sheet_Order.getRange(i,11).getValue()=="")
+                {
+              console.log("found");
+                        // console.log('opent='+open.toString());
+                        // console.log('dt='+d.toString());
+                        // console.log('closet='+close.toString());
+                  found=1;
+                  list=list+'\n'+sheet_Order.getRange(i,6).getValue()+' NT$'+sheet_Order.getRange(i,7).getValue();
+                  price=price+sheet_Order.getRange(i,7).getValue();
+                }
+
+              }
+
+            }
+            if(found)
+            {
+              list=list+'\n總價：NT$'+price;
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+            }
+            else
+            {
+            console.log("unfound");
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"您尚未訂餐。。。");
+            }
+
+          return;
+
+          case '改店家名稱':
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"請輸入\"元店家名稱\"改為\"新店加名稱\"");
+          return;
+
+          default:
+    /*    var imageId = getImageId(messageID,Sheet);
+        
+        var imageurl="https://drive.google.com/uc?export=view&id="+imageId
+        //var sheetImageurl="=IMAGE(\""+imageurl+'\")';
+        //Sheet.getRange(8, 1).setValue(sheetImageurl);  // Insert Image
+        Sheet.getRange(8, 1).setValue(imageurl);  // Insert Image
+          var t=imageId+'\n'+msg.events[0].message.type+'\n'+msg.events[0].message.contentProvider.type+'\n'+imageurl;
+    //        getImage(messageID);
+            send_text_image_msg(CHANNEL_ACCESS_TOKEN, replyToken,t,Sheet.getRange(8, 1).getValue() );
+            console.log(messageID);
+    */
+            console.log('text command end');
+          //  uploadFile();
+
+        }
+        
+        if(processStatus==1 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName("店家");
+
+          var lastRow=Sheet.getLastRow();
+          console.log("lastRow="+lastRow);
+          for(i=4;i<=lastRow;i++)
+          {
+            if(Sheet.getRange(i,2).getValue()==userMessage)
+            {
+              processStatus=0;
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"店家已經存在\n要另新增店家名稱嗎?(是/否)");
+              startTimeTrigger();
+              return;
+            }
+
+          }
+
+          Sheet.getRange(lastRow+1,1).setValue(Sheet.getRange(lastRow,1).getValue()+1);
+//          Sheet.getRange(lastRow+1,1).setValue(lastRow-2);
+          Sheet.getRange(lastRow+1,2).setValue(userMessage);
+          targetSheet=SpreadSheet.insertSheet(userMessage);
+          console.log('targetSheet='+userMessage);
+          targetSheet.getRange("A1").setValue("Manu");
+          targetSheet.getRange("A2").setValue(0);//編號
+          targetSheet.getRange("B2").setValue("餐點");
+          targetSheet.getRange("C2").setValue("售價");
+          processStatus=11;
+          sheet_Variable.getRange("B1").setValue(processStatus);
+          sheet_Variable.getRange("B2").setValue(userMessage);
+          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,userMessage+"新增了\n要繼續新增餐點嗎?(是/否)");
+          startTimeTrigger();
+          return;
+
+        }
+
+        if((processStatus==11 && occupied==userId) || (processStatus==51 && occupied==userId))
+        {
+          targetSheet=SpreadSheet.getSheetByName(targetSheet);
+          var lastRow=targetSheet.getLastRow();
+          for(i=3;i<=lastRow;i++)
+          {
+            if(targetSheet.getRange(i,2).getValue()==userMessage)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"餐點已經存在\n要另新增餐點名稱嗎?(是/否)");
+              startTimeTrigger();
+              return;
+            }
+
+          }
+
+          targetSheet.getRange(lastRow+1,1).setValue(targetSheet.getRange(lastRow,1).getValue()+1);
+          targetSheet.getRange(lastRow+1,2).setValue(userMessage);
+          if(processStatus==11)
+            processStatus=111;
+          else
+            processStatus=511;
+          sheet_Variable.getRange("B1").setValue(processStatus);
+          targetRow=lastRow+1;
+          sheet_Variable.getRange("B3").setValue(targetRow);
+
+          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,userMessage+"新增了\n請問售價是?");
+          startTimeTrigger();
+          return;
+
+        }
+
+        if((processStatus==111 && occupied==userId) || (processStatus==511 && occupied==userId))
+        {
+          //var lastRow=targetSheet.getLastRow();
+          console.log("targetSheet="+targetSheet);
+          targetSheet=SpreadSheet.getSheetByName(targetSheet);
+          console.log("targetSheet="+targetSheet);
+
+          targetSheet.getRange(targetRow,3).setValue(userMessage); 
+          if (processStatus==111)         
+            processStatus=11;
+          else
+            processStatus=51;
+          sheet_Variable.getRange("B1").setValue(processStatus);
+          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,targetSheet.getRange(targetRow,2).getValue()+'NT$'+targetSheet.getRange(targetRow,3).getValue()+"新增了\n要繼續新增餐點嗎?(是/否)");
+          startTimeTrigger();
+          return;
+          
+        }
+
+        if(processStatus==2 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName("店家");
+
+          var lastRow=Sheet.getLastRow();
+          console.log("lastRow="+lastRow);
+          var found=0;
+
+          for(i=4;i<=lastRow;i++)
+          {
+            if(Sheet.getRange(i,2).getValue()==userMessage)
+            {
+              Sheet.deleteRow(i);
+              SpreadSheet.deleteSheet(SpreadSheet.getSheetByName(userMessage));
+
+              processStatus=0;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              sheet_Variable.getRange("B4").setValue(0);
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"店家已經刪除!!...");
+              found=1;
+            }
+
+          }
+          if (found==0)
+          {
+            processStatus=0;
+            sheet_Variable.getRange("B1").setValue(processStatus);
+            occupied=0;
+            sheet_Variable.getRange("B4").setValue(occupied);
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"店家未找到!!...");
+
+          }
+
+        }
+
+        if(processStatus==3 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName(userMessage);
+          if (Sheet==null)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有這間店家，要繼續查詢其他店家嗎?(是/否)");
+            startTimeTrigger();
+          }
+          else
+          {
+            var list ='餐點如下:';
+            var lastRow=Sheet.getLastRow();
+            if(lastRow<3)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"這間店家沒有餐點，要繼續查詢其他店家嗎?(是/否)");
+              startTimeTrigger();
+            }
+            else
+            {
+              for(i=3;i<=lastRow;i++)
+              {
+                list=list+'\n'+Sheet.getRange(i,2).getValue()+" NT$"+Sheet.getRange(i,3).getValue()+' '+Sheet.getRange(i,4).getValue();
+              }
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list);
+              processStatus=0;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              occupied=0;
+              sheet_Variable.getRange("B4").setValue(occupied);
+            }
+          }
+          
+        }
+
+         if(processStatus==4 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName("店家");
+          var list ='餐點如下:';
+          var lastRow=Sheet.getLastRow();
+          if(lastRow<4)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前沒有任何店家");
+          }
+          else
+          {
+            var found=0;
+            for(i=4;i<=lastRow;i++)
+            {
+              if(Sheet.getRange(i,2).getValue()==userMessage)
+              {
+                Sheet.getRange("B2").setValue(Sheet.getRange(i,2).getValue());
+                found=1;
+                processStatus=0;
+                sheet_Variable.getRange("B1").setValue(processStatus);
+                occupied=0;
+                sheet_Variable.getRange("B4").setValue(occupied);
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,Sheet.getRange(i,2).getValue()+"已設成今日餐點");
+
+              };
+            }
+            if (!found)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有這間店家，要設定為其他店家嗎?(是/否)");
+              startTimeTrigger();
+            }
+          }
+          
+        }
+
+        if(processStatus==5 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName(userMessage);
+          if (Sheet==null)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有這間店家，要繼續新增餐點到其他店家嗎?(是/否)");
+            startTimeTrigger();
+          }
+          else
+          {
+            var list ='餐點如下:';
+            var lastRow=Sheet.getLastRow();
+            if(lastRow<3)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"這間店家沒有餐點，\n\n請問新增餐點名稱?");
+            }
+            else
+            {
+              for(i=3;i<=lastRow;i++)
+              {
+                list=list+'\n'+Sheet.getRange(i,2).getValue()+" NT$"+Sheet.getRange(i,3).getValue()+' '+Sheet.getRange(i,4).getValue();
+              }
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list+'\n\n請問新增餐點名稱?');
+            }
+            processStatus=51;
+            sheet_Variable.getRange("B1").setValue(processStatus);
+            sheet_Variable.getRange("B2").setValue(userMessage);
+            startTimeTrigger();
+          }
+        }
+
+        if(processStatus==6 && occupied==userId)
+        {
+          Sheet=SpreadSheet.getSheetByName(userMessage);
+          if (Sheet==null)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有這間店家，要繼續到其他店家刪除餐點嗎?(是/否)");
+            startTimeTrigger();
+          }
+          else
+          {
+            var list ='餐點如下:';
+            var lastRow=Sheet.getLastRow();
+            if(lastRow<3)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"這間店家沒有餐點，要繼續到其他店家刪除餐點嗎?(是/否)");
+            }
+            else
+            {
+              for(i=3;i<=lastRow;i++)
+              {
+                list=list+'\n'+Sheet.getRange(i,2).getValue()+" NT$"+Sheet.getRange(i,3).getValue()+' '+Sheet.getRange(i,4).getValue();
+              }
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,list+'\n\n請問刪除餐點名稱?');
+              processStatus=61;
+              sheet_Variable.getRange("B1").setValue(processStatus);
+              sheet_Variable.getRange("B2").setValue(userMessage);
+              startTimeTrigger();
+            }
+          }
+        }
+
+        if(processStatus==61 && occupied==userId)
+        {
+          targetSheet=SpreadSheet.getSheetByName(targetSheet);
+          var lastRow=targetSheet.getLastRow();
+          var found=0;
+          for(i=3;i<=lastRow;i++)
+          {
+            if(targetSheet.getRange(i,2).getValue()==userMessage)
+            {
+              targetSheet.deleteRow(i);
+              found=1;
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"餐點已經刪除\n要另刪除餐點名稱嗎?(是/否)");
+              break;
+            }
+          }
+
+          if(!found)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken, userMessage+"餐點不在此店家\n要另刪除餐點名稱嗎?(是/否)");
+          }
+          startTimeTrigger();
+          return;
+
+        }
+
+        var isAdd = userMessage.includes("加點");
+        if (isAdd) 
+        {
+          Sheet=SpreadSheet.getSheetByName("店家")
+          if(Sheet.getRange("B1").getValue()==0)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"已超過點餐時間嘍，請待點餐時間在點餐喔。。。");
+          }
+          else
+          {
+            var msg_split = userMessage.split("加點");
+            var sheet_restaurant=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());          
+//          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,msg_split[0]+'/'+msg_split[1]);
+            if(msg_split[0].trim()=="")
+            {
+              var lastRow=sheet_restaurant.getLastRow();
+              if(lastRow<3)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"此店家無餐點，請管理員加入餐點後在點餐！");
+              }
+              else
+              {
+                var found=0;
+                for (i=3;i<=lastRow;i++)
+                {
+                  if(sheet_restaurant.getRange(i,2).getValue()==msg_split[1].trim())
+                  {
+                    found=1;
+                    var lrow=sheet_Order.getLastRow();
+//                    var today= new Date();
+                    sheet_Order.getRange(lrow+1,1).setValue(sheet_Order.getRange(lrow,1).getValue()+1);
+//                    today.setTime(today.getTime()+1000*60*60*12);
+                    sheet_Order.getRange(lrow+1,2).setValue(today.toString());
+                    sheet_Order.getRange(lrow+1,3).setValue(today.toLocaleTimeString());
+                    sheet_Order.getRange(lrow+1,4).setValue(username);
+                    sheet_Order.getRange(lrow+1,5).setValue(sheet_restaurant.getSheetName());
+                    sheet_Order.getRange(lrow+1,6).setValue(sheet_restaurant.getRange(i,2).getValue());
+                    sheet_Order.getRange(lrow+1,7).setValue(sheet_restaurant.getRange(i,3).getValue());
+                    sheet_Order.getRange(lrow+1,8).setValue(1);
+                    sheet_Order.getRange(lrow+1,9).setValue(sheet_Order.getRange(lrow+1,7).getValue()*sheet_Order.getRange(lrow+1,8).getValue());
+                    sheet_Order.getRange(lrow+1,10).setValue('加點');
+                    send_msg(CHANNEL_ACCESS_TOKEN, replyToken, username+'的'+msg_split[1].trim()+' NT$'+sheet_restaurant.getRange(i,3).getValue()+"\n點餐成功。。。");
+
+//add temperally meal count and member count.
+                    lrow=sheet_Mealorder.getLastRow();
+                    var f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Mealorder.getRange(j,3).getValue()==msg_split[1].trim())
+                      {
+                        f=1;
+                        sheet_Mealorder.getRange(j,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(j,4).setValue(sheet_Mealorder.getRange(j,4).getValue()+1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Mealorder.getRange(lrow+1,1).setValue(sheet_Mealorder.getRange(lrow,1).getValue()+1)
+                        sheet_Mealorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(lrow+1,3).setValue(msg_split[1].trim());
+                        sheet_Mealorder.getRange(lrow+1,4).setValue(sheet_Mealorder.getRange(j,4).getValue()+1);
+                    }
+
+                    lrow=sheet_Memberorder.getLastRow();
+                    f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Memberorder.getRange(j,3).getValue()==username)
+                      {
+                        f=1;
+                        sheet_Memberorder.getRange(j,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(j,4).setValue(sheet_Memberorder.getRange(j,4).getValue()+','+msg_split[1].trim());
+                        sheet_Memberorder.getRange(j,6).setValue(sheet_Memberorder.getRange(j,6).getValue()+1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Memberorder.getRange(lrow+1,1).setValue(sheet_Memberorder.getRange(lrow,1).getValue()+1)
+                        sheet_Memberorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(lrow+1,3).setValue(username);
+                        sheet_Memberorder.getRange(lrow+1,4).setValue(msg_split[1].trim());
+                        sheet_Memberorder.getRange(lrow+1,6).setValue(sheet_Memberorder.getRange(j,6).getValue()+1);
+                    }
+
+                    return;
+                  }
+                }
+                if(!found)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"無此餐點，請確認正確餐點名稱！");
+                }
+              }
+            }
+            else
+            {
+              var lastRow=sheet_restaurant.getLastRow();
+              if(lastRow<3)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"此店家無餐點，請管理員加入餐點後在點餐！");
+              }
+              else
+              {
+                var found=0;
+                for (i=3;i<=lastRow;i++)
+                {
+                  if(sheet_restaurant.getRange(i,2).getValue()==msg_split[0].trim())
+                  {
+                    found=1;
+                    var lrow=sheet_Order.getLastRow();
+//                    var today= new Date();
+                    sheet_Order.getRange(lrow+1,1).setValue(sheet_Order.getRange(lrow,1).getValue()+1);
+//                    today.setTime(today.getTime()+1000*60*60*12);
+                    sheet_Order.getRange(lrow+1,2).setValue(today.toString());
+                    sheet_Order.getRange(lrow+1,3).setValue(today.toLocaleTimeString());
+                    sheet_Order.getRange(lrow+1,4).setValue(username);
+                    sheet_Order.getRange(lrow+1,5).setValue(sheet_restaurant.getSheetName());
+                    sheet_Order.getRange(lrow+1,6).setValue(sheet_restaurant.getRange(i,2).getValue());
+                    sheet_Order.getRange(lrow+1,7).setValue(sheet_restaurant.getRange(i,3).getValue());
+                    sheet_Order.getRange(lrow+1,8).setValue(1);
+                    sheet_Order.getRange(lrow+1,9).setValue(sheet_Order.getRange(lrow+1,7).getValue()*sheet_Order.getRange(lrow+1,8).getValue());
+                    sheet_Order.getRange(lrow+1,10).setValue('加點');
+                    send_msg(CHANNEL_ACCESS_TOKEN, replyToken, username+'的'+msg_split[0].trim()+' NT$'+sheet_restaurant.getRange(i,3).getValue()+"\n點餐成功。。。");
+
+//add temperally meal count and member count.
+                    lrow=sheet_Mealorder.getLastRow();
+                    var f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Mealorder.getRange(j,3).getValue()==msg_split[0].trim())
+                      {
+                        f=1;
+                        sheet_Mealorder.getRange(j,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(j,4).setValue(sheet_Mealorder.getRange(j,4).getValue()+1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Mealorder.getRange(lrow+1,1).setValue(sheet_Mealorder.getRange(lrow,1).getValue()+1)
+                        sheet_Mealorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(lrow+1,3).setValue(msg_split[0].trim());
+                        sheet_Mealorder.getRange(lrow+1,4).setValue(sheet_Mealorder.getRange(j,4).getValue()+1);
+                    }
+
+                    lrow=sheet_Memberorder.getLastRow();
+                    f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Memberorder.getRange(j,3).getValue()==username)
+                      {
+                        f=1;
+                        sheet_Memberorder.getRange(j,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(j,4).setValue(sheet_Memberorder.getRange(j,4).getValue()+','+msg_split[0].trim());
+                        sheet_Memberorder.getRange(j,6).setValue(sheet_Memberorder.getRange(j,6).getValue()+1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Memberorder.getRange(lrow+1,1).setValue(sheet_Memberorder.getRange(lrow,1).getValue()+1)
+                        sheet_Memberorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(lrow+1,3).setValue(username);
+                        sheet_Memberorder.getRange(lrow+1,4).setValue(msg_split[0].trim());
+                        sheet_Memberorder.getRange(lrow+1,6).setValue(sheet_Memberorder.getRange(j,6).getValue()+1);
+                    }
+
+
+                    return;
+                  }
+                }
+                if(!found)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"無此餐點，請確認正確餐點名稱！");
+                }
+              }
+
+            }
+
+          }
+
+        }
+
+        var isCancel = userMessage.includes("取消");
+        if (isCancel) 
+        {
+//          var msg_split = userMessage.split("取消"); 
+//          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,msg_split[0].trim()+'/'+msg_split[1].trim());
+          Sheet=SpreadSheet.getSheetByName("店家")
+          if(Sheet.getRange("B1").getValue()==0)
+          {
+            send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"已超過點餐時間嘍，請待點餐時間在點餐喔。。。");
+          }
+          else
+          {
+            var msg_split = userMessage.split("取消");
+//            var sheet_restaurant=SpreadSheet.getSheetByName(Sheet.getRange("B2").getValue());          
+//          send_msg(CHANNEL_ACCESS_TOKEN, replyToken,msg_split[0]+'/'+msg_split[1]);
+            if(msg_split[0].trim()=="")
+            {
+              var lastRow=sheet_Order.getLastRow();
+              if(lastRow<2)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"沒有任何訂餐紀錄！");
+              }
+              else
+              {
+                var found=0;
+                for (i=2;i<=lastRow;i++)
+                {
+                  var d=new Date();
+                  d.setTime(Date.parse(sheet_Order.getRange(i,2).getValue()));
+//                  var today=new Date();
+//                  console.log("d.getDate()="+d.getDate());
+//                  console.log("today.getDate()"+today.getDate());
+
+                  if(d.getDate()==today.getDate() && sheet_Order.getRange(i,4).getValue()==username && sheet_Order.getRange(i,6).getValue()== msg_split[1].trim() && sheet_Order.getRange(i,11).getValue()=="")
+                  {
+//                    console.log("Cancel1...");
+                    found=1;
+                    sheet_Order.getRange(i,11).setValue('取消');
+                    send_msg(CHANNEL_ACCESS_TOKEN, replyToken, username+'的'+msg_split[1].trim()+"取消成功。。。");
+
+//add temperally meal count and member count.
+                    var lrow=sheet_Mealorder.getLastRow();
+                    var f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Mealorder.getRange(j,3).getValue()==msg_split[1].trim())
+                      {
+                        f=1;
+                        sheet_Mealorder.getRange(j,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(j,4).setValue(sheet_Mealorder.getRange(j,4).getValue()-1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Mealorder.getRange(lrow+1,1).setValue(sheet_Mealorder.getRange(lrow,1).getValue()+1)
+                        sheet_Mealorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(lrow+1,3).setValue(msg_split[1].trim());
+                        sheet_Mealorder.getRange(lrow+1,4).setValue(sheet_Mealorder.getRange(j,4).getValue()-1);
+                    }
+
+                    lrow=sheet_Memberorder.getLastRow();
+                    f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Memberorder.getRange(j,3).getValue()==username)
+                      {
+                        f=1;
+                        sheet_Memberorder.getRange(j,2).setValue(today.toString());
+                        sheet_Memberorder.getRange(j,5).setValue(sheet_Memberorder.getRange(j,5).getValue()+'-'+msg_split[1].trim());
+                        sheet_Memberorder.getRange(j,6).setValue(sheet_Memberorder.getRange(j,6).getValue()-1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Memberorder.getRange(lrow+1,1).setValue(sheet_Memberorder.getRange(lrow,1).getValue()+1)
+                        sheet_Memberorder.getRange(lrow+1,2).setValue(today.toString());
+                        sheet_Memberorder.getRange(lrow+1,3).setValue(username);
+                        sheet_Memberorder.getRange(lrow+1,5).setValue(msg_split[1].trim());
+                        sheet_Memberorder.getRange(lrow+1,6).setValue(sheet_Memberorder.getRange(j,6).getValue()-1);
+                    }
+                    return;
+                  }
+                }
+                if(!found)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"您未點此餐，請確認正確餐點名稱！");
+                }
+              }
+            }
+            else
+            {
+              var lastRow=sheet_Order.getLastRow();
+              if(lastRow<2)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"此店家無餐點，請管理員加入餐點後在點餐！");
+              }
+              else
+              {
+                var found=0;
+                for (i=2;i<=lastRow;i++)
+                {
+                  var d=new Date();
+                  d.setTime(Date.parse(sheet_Order.getRange(i,2).getValue()));
+//                  var today=new Date();
+                  if(d.getDate()==today.getDate() && sheet_Order.getRange(i,4).getValue()==username && sheet_Order.getRange(i,6).getValue()== msg_split[0].trim() && sheet_Order.getRange(i,11).getValue()=="")
+                  {
+                    console.log("Cancel2...");
+                    found=1;
+                    sheet_Order.getRange(i,11).setValue('取消');
+                    send_msg(CHANNEL_ACCESS_TOKEN, replyToken, username+'的'+msg_split[0].trim()+"取消成功。。。");
+
+//add temperally meal count and member count.
+                    var lrow=sheet_Mealorder.getLastRow();
+                    var f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Mealorder.getRange(j,3).getValue()==msg_split[0].trim())
+                      {
+                        f=1;
+                        sheet_Mealorder.getRange(j,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(j,4).setValue(sheet_Mealorder.getRange(j,4).getValue()-1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Mealorder.getRange(lrow+1,1).setValue(sheet_Mealorder.getRange(lrow,1).getValue()+1)
+                        sheet_Mealorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Mealorder.getRange(lrow+1,3).setValue(msg_split[0].trim());
+                        sheet_Mealorder.getRange(lrow+1,4).setValue(sheet_Mealorder.getRange(j,4).getValue()-1);
+                    }
+
+                    lrow=sheet_Memberorder.getLastRow();
+                    f=0;
+                    for(j=2;j<=lrow;j++)
+                    {
+                      if(sheet_Memberorder.getRange(j,3).getValue()==username)
+                      {
+                        f=1;
+                        sheet_Memberorder.getRange(j,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(j,5).setValue(sheet_Memberorder.getRange(j,5).getValue()+'-'+msg_split[0].trim());
+                        sheet_Memberorder.getRange(j,6).setValue(sheet_Memberorder.getRange(j,6).getValue()-1);
+                        break;
+                      }
+                    }
+                    if(!f)
+                    {
+                        sheet_Memberorder.getRange(lrow+1,1).setValue(sheet_Memberorder.getRange(lrow,1).getValue()+1)
+                        sheet_Memberorder.getRange(lrow+1,2).setValue(today.toString())
+                        sheet_Memberorder.getRange(lrow+1,3).setValue(username);
+                        sheet_Memberorder.getRange(lrow+1,5).setValue(msg_split[0].trim());
+                        sheet_Memberorder.getRange(lrow+1,6).setValue(sheet_Memberorder.getRange(j,6).getValue()-1);
+                    }
+
+                    return;
+                  }
+                }
+                if(!found)
+                {
+                  send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"您未點此餐，請確認正確餐點名稱！");
+                }
+              }
+            }
+          }
+        }
+
+        var isChange = userMessage.includes("改為");
+        if (isChange)
+        {
+          var msg_split=userMessage.split("改為");
+            Sheet=SpreadSheet.getSheetByName("店家");
+            if (Sheet==null)
+            {
+              send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+            }
+            else
+            {
+              var lastRow=Sheet.getLastRow();
+              if(lastRow<4)
+              {
+                send_msg(CHANNEL_ACCESS_TOKEN, replyToken,"目前無任何店家");
+              }
+              else
+              {
+                for(i=4;i<=lastRow;i++)
+                {
+                  if(Sheet.getRange(i,2).getValue()==msg_split[0].trim())
+                  {
+                    var sr=SpreadSheet.getSheetByName(msg_split[0].trim());
+                    sr.setName(msg_split[1].trim());
+                    Sheet.getRange(i,2).setValue(msg_split[1].trim());
+                    send_msg(CHANNEL_ACCESS_TOKEN, replyToken,userMessage+"...變更完成");
+                    break;
+                  }
+                }
+              }
+            }
+
+        }
+
+        return;
+
+      case 'image':
+        if(processStatus==12 && occupied==userId)
+        {
+          var imageId = getImageId(messageID);
+//          var imageId = getImageId(messageID,Sheet);
+          var imageurl="https://drive.google.com/uc?export=view&id="+imageId;
+          targetSheet=SpreadSheet.getSheetByName(targetSheet);          
+          targetSheet.getRange(1,2).setValue(imageurl);
+          processStatus=1;
+          sheet_Variable.getRange("B1").setValue(processStatus);
+          send_text_image_msg(CHANNEL_ACCESS_TOKEN, replyToken,"圖片儲存完成,"+targetSheet.getSheetName()+"所有資料新增完成\n要繼續新增店家嗎？(是/否)",targetSheet.getRange(1,2).getValue() );
+
+        }
+
+      return;
+      
+      default:
+        console.log('Message type not found');      
+    }
+
+/*
+    // 判斷是否為回報內容
+    // 現在預設是總共四行且第四行有數字
+    msg_split = userMessage.split(/\n/);
+    msg_info = msg_split[3];
+    
+    if(msg_info == undefined)
+      throw "msg format not correct";
+    
+    if(msg_split[4] != undefined)
+      throw "Format error: too many lines";
+  
+    // 從回報內容中取得回報的號碼
+    num = parseInt(msg_info, 10);
+      
+    // 介於介於41到50之間才是班上的
+    if(num>=41 && num<=50)
+      Sheet.getRange(num-40, 2).setValue(msg_info);
+    else
+      throw "number out of range";
+    
+    Sheet.getRange(11, 2).setValue( print_report_list(Sheet) );
+    
+    send_msg(CHANNEL_ACCESS_TOKEN, replyToken, print_report_list(Sheet));
+*/    
+  }
+  catch(err) {
+    console.log(err);
+  }
+}
+
+
+function print_report_list(Sheet) {
+  
+  report = '';
+  for(i = 1; i <= 10; i++){
+    if (Sheet.getRange(i, 2).getValue() == '' )
+      report = report + Sheet.getRange(i, 1).getValue() + '\r\n';
+    else
+      report = report + Sheet.getRange(i, 2).getValue() + '\r\n';
+  }
+  
+  return report;
+}
+
+
+
+function clear_all_report(Sheet) {
+  
+  for(i = 1; i <= 11; i++){
+      Sheet.getRange(i, 2).setValue('');
+  }
+}
+
+
+function send_msg(token, replyToken, text) {
+  var url = 'https://api.line.me/v2/bot/message/reply';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'replyToken': replyToken,
+      'messages': [{
+        'type': 'text',
+        'text': text,
+      }],
+    }),
+  });
+  
+}
+
+function send_image_msg(token, replyToken, picurl) {
+  var url = 'https://api.line.me/v2/bot/message/reply';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'replyToken': replyToken,
+      'messages': [{
+        'type': 'image',
+        'originalContentUrl': picurl,
+        'previewImageUrl': picurl       
+        }],
+    }),
+  });
+  
+}
+
+function send_text_image_msg(token, replyToken, text, picurl){
+  var url = 'https://api.line.me/v2/bot/message/reply';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'replyToken': replyToken,
+      'messages': 
+      [
+/*        {
+        'type': 'text',
+        'text': text,
+        },
+*/
+        {
+        'type': 'image',
+        'originalContentUrl': picurl,
+        'previewImageUrl': picurl
+        
+        },
+        {
+        'type': 'text',
+        'text': text,
+        }
+      ],
+    }),
+  });
+}
+
+function send_broadcast_msg(token,text){
+  var url = 'https://api.line.me/v2/bot/message/broadcast';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'messages': [{
+        'type': 'text',
+        'text': text,
+      }]
+    }),
+  });
+}
+
+function send_broadcast_image_msg(token,picurl){
+  var url = 'https://api.line.me/v2/bot/message/broadcast';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'messages': [{
+        'type': 'image',
+        'originalContentUrl': picurl,
+        'previewImageUrl': picurl
+      }]
+    }),
+  });
+}
+
+function send_push_msg(token,userid, text) {
+  var url = 'https://api.line.me/v2/bot/message/push';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'to': userid,
+      'messages': [{
+        'type': 'text',
+        'text': text,
+      }],
+    }),
+  });
+  
+}
+
+function send_push_image_msg(token,userid, picurl) {
+  var url = 'https://api.line.me/v2/bot/message/push';
+  UrlFetchApp.fetch(url, {
+    'headers': {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + token,
+    },
+    'method': 'post',
+    'payload': JSON.stringify({
+      'to': userid,
+      'messages': [{
+        'type': 'image',
+        'originalContentUrl': picurl,
+        'previewImageUrl': picurl
+      }],
+    }),
+  });
+  
+}
